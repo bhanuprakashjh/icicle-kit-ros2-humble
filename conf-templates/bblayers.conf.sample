@@ -1,0 +1,20 @@
+# LAYER_CONF_VERSION is increased each time build/conf/bblayers.conf
+# changes incompatibly
+LCONF_VERSION = "7"
+
+BBPATH = "${TOPDIR}"
+BBFILES ?= ""
+
+BSPDIR := "/mnt/yocto-usb/icicle-yocto"
+
+BBLAYERS ?= " \
+  ${BSPDIR}/openembedded-core/meta \
+  ${BSPDIR}/meta-openembedded/meta-oe \
+  ${BSPDIR}/meta-openembedded/meta-python \
+  ${BSPDIR}/meta-openembedded/meta-networking \
+  ${BSPDIR}/meta-polarfire-soc-yocto-bsp/meta-polarfire-soc-bsp \
+  ${BSPDIR}/meta-ros/meta-ros-common \
+  ${BSPDIR}/meta-ros/meta-ros2 \
+  ${BSPDIR}/meta-ros/meta-ros2-humble \
+  ${BSPDIR}/meta-custom \
+  "
