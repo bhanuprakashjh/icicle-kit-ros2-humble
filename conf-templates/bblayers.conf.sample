@@ -5,16 +5,23 @@ LCONF_VERSION = "7"
 BBPATH = "${TOPDIR}"
 BBFILES ?= ""
 
-BSPDIR := "/mnt/yocto-usb/icicle-yocto"
-
+# Base layers populated by the Microchip template (via TEMPLATECONF)
 BBLAYERS ?= " \
-  ${BSPDIR}/openembedded-core/meta \
-  ${BSPDIR}/meta-openembedded/meta-oe \
-  ${BSPDIR}/meta-openembedded/meta-python \
-  ${BSPDIR}/meta-openembedded/meta-networking \
-  ${BSPDIR}/meta-polarfire-soc-yocto-bsp/meta-polarfire-soc-bsp \
-  ${BSPDIR}/meta-ros/meta-ros-common \
-  ${BSPDIR}/meta-ros/meta-ros2 \
-  ${BSPDIR}/meta-ros/meta-ros2-humble \
-  ${BSPDIR}/meta-custom \
+  ##OEROOT##/meta \
+  ##OEROOT##/../meta-openembedded/meta-oe \
+  ##OEROOT##/../meta-openembedded/meta-python \
+  ##OEROOT##/../meta-openembedded/meta-multimedia \
+  ##OEROOT##/../meta-openembedded/meta-networking \
+  ##OEROOT##/../meta-mchp/meta-mchp-common/ \
+  ##OEROOT##/../meta-mchp/meta-mchp-distro \
+  ##OEROOT##/../meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-bsp \
+  ##OEROOT##/../meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-community \
   "
+
+# ROS 2 Humble and custom layers — appended by setup.sh
+# BBLAYERS += " \
+#   <WORK_DIR>/meta-ros/meta-ros-common \
+#   <WORK_DIR>/meta-ros/meta-ros2 \
+#   <WORK_DIR>/meta-ros/meta-ros2-humble \
+#   <WORK_DIR>/meta-custom \
+# "

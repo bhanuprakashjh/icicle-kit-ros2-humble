@@ -41,10 +41,19 @@ sudo locale-gen en_US.UTF-8
 
 ### Option 1: Automated Setup
 
+`setup.sh` installs all dependencies, initialises the repo manifest, writes a
+local manifest to pull `meta-ros` and this repo automatically, then registers
+all layers via `bitbake-layers`.
+
 ```bash
-git clone https://github.com/bhanuprakashjh/icicle-kit-ros2-humble.git
-cd icicle-kit-ros2-humble
-./scripts/setup.sh ~/yocto-icicle
+curl -O https://raw.githubusercontent.com/cybdarren/icicle-kit-ros2-humble/main/scripts/setup.sh
+chmod +x setup.sh
+./setup.sh ~/yocto-icicle
+```
+
+Then build:
+
+```bash
 cd ~/yocto-icicle
 source openembedded-core/oe-init-build-env build
 bitbake drone-stage1
@@ -52,82 +61,106 @@ bitbake drone-stage1
 
 ### Option 2: Manual Setup
 
-#### 1. Clone Yocto Layers
+#### 1. Install dependencies
+
+```bash
+sudo apt-get update
+sudo apt-get install -y gawk wget git git-lfs diffstat unzip texinfo \
+    gcc-multilib build-essential chrpath socat cpio python3 python3-pip \
+    python3-pexpect xz-utils debianutils iputils-ping python3-git \
+    python3-jinja2 python3-subunit zstd liblz4-tool file locales \
+    libacl1 libncurses-dev lz4 repo
+sudo locale-gen en_US.UTF-8
+```
+
+#### 2. Initialise repo from the Microchip manifest
 
 ```bash
 mkdir -p ~/yocto-icicle && cd ~/yocto-icicle
 
-# Core Yocto layers (Scarthgap release)
-git clone -b scarthgap https://git.yoctoproject.org/git/poky openembedded-core
-git clone -b scarthgap https://github.com/openembedded/meta-openembedded
-
-# PolarFire SoC BSP
-git clone -b scarthgap https://github.com/polarfire-soc/meta-polarfire-soc-yocto-bsp
-
-# ROS 2 layers
-git clone -b scarthgap https://github.com/ros/meta-ros
+repo init \
+    -u https://github.com/linux4microchip/meta-mchp-manifest.git \
+    -b refs/tags/linux4microchip-2026.04 \
+    -m polarfire-soc/default.xml
 ```
 
-#### 2. Copy Custom Layer
+#### 3. Write a local manifest for meta-ros and this repo
 
 ```bash
-# Clone this repository
-git clone https://github.com/bhanuprakashjh/icicle-kit-ros2-humble.git
+mkdir -p .repo/local_manifests
+cat > .repo/local_manifests/icicle-kit-ros2-humble.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <remote name="github"
+            fetch="https://github.com/" />
 
-# Copy custom layer
-cp -r icicle-kit-ros2-humble/meta-custom ~/yocto-icicle/
+    <project name="ros/meta-ros"
+             path="meta-ros"
+             remote="github"
+             revision="scarthgap" />
+
+    <project name="cybdarren/icicle-kit-ros2-humble"
+             path="icicle-kit-ros2-humble"
+             remote="github"
+             revision="main" />
+</manifest>
+EOF
 ```
 
-#### 3. Initialize Build Environment
+#### 4. Sync all repos
 
 ```bash
-cd ~/yocto-icicle
+repo sync
+```
+
+This downloads in one step:
+- `openembedded-core`, `bitbake`, `meta-openembedded` — OE core toolchain
+- `meta-mchp` — Microchip BSP (replaces the old `meta-polarfire-soc-yocto-bsp`)
+- `meta-ros` — ROS 2 Humble layers
+- `icicle-kit-ros2-humble` — this repo (custom layer + scripts)
+
+#### 5. Initialise build environment from Microchip template
+
+```bash
+export TEMPLATECONF="${PWD}/meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-bsp/conf/templates/default"
 source openembedded-core/oe-init-build-env build
 ```
 
-#### 4. Configure Build
+The Microchip template pre-populates `bblayers.conf` and `local.conf` with the
+correct BSP layers and machine defaults.
 
-Edit `conf/bblayers.conf`:
-```bitbake
-BSPDIR := "${TOPDIR}/.."
+#### 6. Register ROS 2 and custom layers
 
-BBLAYERS ?= " \
-  ${BSPDIR}/openembedded-core/meta \
-  ${BSPDIR}/meta-openembedded/meta-oe \
-  ${BSPDIR}/meta-openembedded/meta-python \
-  ${BSPDIR}/meta-openembedded/meta-networking \
-  ${BSPDIR}/meta-polarfire-soc-yocto-bsp/meta-polarfire-soc-bsp \
-  ${BSPDIR}/meta-ros/meta-ros-common \
-  ${BSPDIR}/meta-ros/meta-ros2 \
-  ${BSPDIR}/meta-ros/meta-ros2-humble \
-  ${BSPDIR}/meta-custom \
-"
+```bash
+bitbake-layers add-layer ../meta-ros/meta-ros-common
+bitbake-layers add-layer ../meta-ros/meta-ros2
+bitbake-layers add-layer ../meta-ros/meta-ros2-humble
+bitbake-layers add-layer ../icicle-kit-ros2-humble/meta-custom
 ```
 
-Add to `conf/local.conf`:
-```bitbake
-# Machine selection
-MACHINE = "icicle-kit-es"
+#### 7. Configure local.conf
 
-# Parallel build (adjust to your CPU cores)
+Append to `conf/local.conf` (see [conf-templates/local.conf.sample](conf-templates/local.conf.sample)):
+
+```bitbake
+MACHINE = "mpfs-icicle-kit"
+
 BB_NUMBER_THREADS = "8"
 PARALLEL_MAKE = "-j 8"
 
-# Shared cache (optional, speeds up rebuilds)
 DL_DIR = "${TOPDIR}/../downloads"
 SSTATE_DIR = "${TOPDIR}/../sstate-cache"
 
-# Enable package management on target
 EXTRA_IMAGE_FEATURES += "package-management"
-
-# Development features
 IMAGE_FEATURES += "tools-debug tools-sdk dev-pkgs"
 
-# Workaround for SPDX issues
 INHERIT:remove = "create-spdx"
 ```
 
-#### 5. Build the Image
+> **Note:** The machine name changed from `icicle-kit-es` (old
+> `meta-polarfire-soc-yocto-bsp`) to `mpfs-icicle-kit` (new `meta-mchp` BSP).
+
+#### 8. Build the image
 
 ```bash
 bitbake drone-stage1
@@ -135,24 +168,34 @@ bitbake drone-stage1
 
 Build time: 4-8 hours on first build (depending on hardware and internet speed).
 
+## BSP Layer Structure (new vs old)
+
+| Old (`meta-polarfire-soc-yocto-bsp`) | New (`meta-mchp`) |
+|--------------------------------------|-------------------|
+| `meta-polarfire-soc-bsp` | `meta-mchp/meta-mchp-common` |
+| — | `meta-mchp/meta-mchp-distro` |
+| — | `meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-bsp` |
+| — | `meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-community` |
+| Machine: `icicle-kit-es` | Machine: `mpfs-icicle-kit` |
+
 ## Flashing the Image
 
 The built image is located at:
 ```
-build/tmp-glibc/deploy/images/icicle-kit-es/drone-stage1-icicle-kit-es.rootfs.wic.gz
+build/tmp-glibc/deploy/images/mpfs-icicle-kit/drone-stage1-mpfs-icicle-kit.rootfs.wic.gz
 ```
 
 ### Using bmaptool (Recommended)
 
 ```bash
 sudo apt install bmap-tools
-sudo bmaptool copy drone-stage1-icicle-kit-es.rootfs.wic.gz /dev/sdX
+sudo bmaptool copy drone-stage1-mpfs-icicle-kit.rootfs.wic.gz /dev/sdX
 ```
 
 ### Using dd
 
 ```bash
-gunzip -c drone-stage1-icicle-kit-es.rootfs.wic.gz | sudo dd of=/dev/sdX bs=4M status=progress
+gunzip -c drone-stage1-mpfs-icicle-kit.rootfs.wic.gz | sudo dd of=/dev/sdX bs=4M status=progress
 sync
 ```
 
@@ -177,23 +220,15 @@ Settings: 115200 baud, 8N1, no flow control
 ### Test ROS 2
 
 ```bash
-# Source ROS 2 environment
 source /opt/ros/humble/setup.bash
-
-# Check ROS 2 installation
 ros2 --help
-
-# List available nodes
 ros2 node list
-
-# Test topic communication
 ros2 topic list
 ```
 
 ### Test MAVROS
 
 ```bash
-# Start MAVROS with serial connection to flight controller
 ros2 launch mavros mavros.launch.py fcu_url:=/dev/ttyS1:921600
 ```
 
@@ -222,9 +257,9 @@ icicle-kit-ros2-humble/
 │   └── recipes-core/
 │       └── images/
 │           └── drone-stage1.bb  # Image recipe
-├── conf-templates/           # Sample configuration files
-│   ├── local.conf.sample
-│   └── bblayers.conf.sample
+├── conf-templates/           # Reference configuration files
+│   ├── local.conf.sample     # Settings appended after template init
+│   └── bblayers.conf.sample  # Shows full layer stack (template + ROS 2)
 ├── scripts/
 │   └── setup.sh              # Automated setup script
 └── docs/
@@ -235,7 +270,7 @@ icicle-kit-ros2-humble/
 
 ### Adding Packages
 
-Edit `meta-custom/recipes-core/images/drone-stage1.bb`:
+Edit [meta-custom/recipes-core/images/drone-stage1.bb](meta-custom/recipes-core/images/drone-stage1.bb):
 
 ```bitbake
 IMAGE_INSTALL:append = " \
@@ -244,8 +279,6 @@ IMAGE_INSTALL:append = " \
 ```
 
 ### Creating a New Image
-
-Copy and modify the existing recipe:
 
 ```bash
 cp meta-custom/recipes-core/images/drone-stage1.bb \
@@ -266,7 +299,6 @@ rm -rf tmp-glibc/work/*
 
 ### Network Timeout During Fetch
 
-Retry or use a mirror:
 ```bash
 bitbake drone-stage1 -c fetch
 ```
@@ -275,10 +307,14 @@ bitbake drone-stage1 -c fetch
 
 Use bare recipe names (e.g., `ros-base` not `ros-humble-ros-base`).
 
+### `repo` Command Not Found
+
+Install the repo tool as described in the [prerequisites](#install-the-repo-tool) section above.
+
 ## References
 
-- [Microchip PolarFire SoC Documentation](https://github.com/polarfire-soc)
-- [meta-polarfire-soc-yocto-bsp](https://github.com/polarfire-soc/meta-polarfire-soc-yocto-bsp)
+- [Microchip meta-mchp-manifest](https://github.com/linux4microchip/meta-mchp-manifest)
+- [Microchip meta-mchp BSP](https://github.com/linux4microchip/meta-mchp)
 - [meta-ros Documentation](https://github.com/ros/meta-ros)
 - [ROS 2 Humble Documentation](https://docs.ros.org/en/humble/)
 - [Yocto Project Documentation](https://docs.yoctoproject.org/)

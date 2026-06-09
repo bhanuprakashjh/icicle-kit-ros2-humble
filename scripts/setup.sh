@@ -1,131 +1,127 @@
 #!/bin/bash
 # setup.sh - Automated Yocto setup for ROS 2 Humble on ICICLE Kit
 #
+# Uses the repo tool with a local manifest to pull all layers (Microchip BSP,
+# meta-ros, and this repo) into the workspace in a single repo sync, then
+# uses bitbake-layers to register the custom layers.
+#
 # Usage: ./setup.sh [work_directory]
 # Example: ./setup.sh ~/yocto-icicle
 
-set -e
+# Microchip manifest tag — update this to move to a newer BSP release
+MCHP_TAG="refs/tags/linux4microchip-2026.04"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# GitHub details for this repo — update if you fork
+ICICLE_ROS2_REMOTE="https://github.com/cybdarren/icicle-kit-ros2-humble"
+ICICLE_ROS2_REVISION="main"
 
 WORK_DIR=${1:-$(pwd)/yocto-icicle}
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo -e "${GREEN}======================================${NC}"
-echo -e "${GREEN} ROS 2 Humble for ICICLE Kit Setup${NC}"
-echo -e "${GREEN}======================================${NC}"
-echo ""
-echo -e "Work directory: ${YELLOW}${WORK_DIR}${NC}"
-echo ""
+echo "Installing ROS 2 Humble on ICICLE Kit"
+echo "======================================"
 
-# Check for required tools
-echo -e "${YELLOW}Checking prerequisites...${NC}"
-for cmd in git python3 gcc; do
-    if ! command -v $cmd &> /dev/null; then
-        echo -e "${RED}Error: $cmd is not installed${NC}"
-        echo "Please install build dependencies first:"
-        echo "  sudo apt install gawk wget git diffstat unzip texinfo gcc build-essential chrpath socat cpio python3 python3-pip python3-pexpect xz-utils debianutils iputils-ping python3-git python3-jinja2 python3-subunit zstd liblz4-tool file locales"
-        exit 1
-    fi
-done
-echo -e "${GREEN}Prerequisites OK${NC}"
-echo ""
+# ---------------------------------------------------------------------------
+# Step 1: Install required packages
+# ---------------------------------------------------------------------------
+echo "Installing required packages"
+echo "============================"
+sudo apt-get update
+sudo apt-get install -y gawk wget git git-lfs diffstat unzip texinfo \
+    gcc-multilib build-essential chrpath socat cpio python3 python3-pip \
+    python3-pexpect xz-utils debianutils iputils-ping python3-git \
+    python3-jinja2 python3-subunit zstd liblz4-tool file locales \
+    libacl1 libncurses-dev lz4 repo
 
-# Create work directory
+sudo locale-gen en_US.UTF-8
+
+# ---------------------------------------------------------------------------
+# Step 2: Create work directory and repo init from Microchip manifest
+# ---------------------------------------------------------------------------
+echo "Creating work directory: $WORK_DIR"
+echo "==================================="
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-# Clone layers
-echo -e "${YELLOW}Cloning Yocto layers (Scarthgap)...${NC}"
-echo "This may take 10-20 minutes depending on your internet connection."
-echo ""
+echo "Initialising repo manifest (answer N to colour prompt if asked)"
+echo "==============================================================="
+repo init \
+    -u https://github.com/linux4microchip/meta-mchp-manifest.git \
+    -b "${MCHP_TAG}" \
+    -m polarfire-soc/default.xml
 
-if [ ! -d "openembedded-core" ]; then
-    echo "Cloning openembedded-core..."
-    git clone -b scarthgap https://git.yoctoproject.org/git/poky openembedded-core
-else
-    echo "openembedded-core already exists, skipping..."
-fi
+# ---------------------------------------------------------------------------
+# Step 3: Write local manifest to add meta-ros and this repo
+# ---------------------------------------------------------------------------
+echo "Writing local manifest file"
+echo "==========================="
+mkdir -p .repo/local_manifests
 
-if [ ! -d "meta-openembedded" ]; then
-    echo "Cloning meta-openembedded..."
-    git clone -b scarthgap https://github.com/openembedded/meta-openembedded
-else
-    echo "meta-openembedded already exists, skipping..."
-fi
+cat <<EOF > ".repo/local_manifests/icicle-kit-ros2-humble.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <remote name="github"
+            fetch="https://github.com/" />
 
-if [ ! -d "meta-polarfire-soc-yocto-bsp" ]; then
-    echo "Cloning meta-polarfire-soc-yocto-bsp..."
-    git clone -b scarthgap https://github.com/polarfire-soc/meta-polarfire-soc-yocto-bsp
-else
-    echo "meta-polarfire-soc-yocto-bsp already exists, skipping..."
-fi
+    <!-- ROS 2 Humble layer -->
+    <project name="ros/meta-ros"
+             path="meta-ros"
+             remote="github"
+             revision="scarthgap" />
 
-if [ ! -d "meta-ros" ]; then
-    echo "Cloning meta-ros..."
-    git clone -b scarthgap https://github.com/ros/meta-ros
-else
-    echo "meta-ros already exists, skipping..."
-fi
+    <!-- Custom drone/ROS 2 layer and setup scripts -->
+    <project name="cybdarren/icicle-kit-ros2-humble"
+             path="icicle-kit-ros2-humble"
+             remote="github"
+             revision="${ICICLE_ROS2_REVISION}" />
+</manifest>
+EOF
+echo "Local manifest created"
 
-echo ""
-echo -e "${GREEN}All layers cloned successfully!${NC}"
-echo ""
+# ---------------------------------------------------------------------------
+# Step 4: Sync all repos
+# ---------------------------------------------------------------------------
+echo "Syncing repos (this may take 10-20 minutes)"
+echo "============================================"
+repo sync
+echo "All repos synced"
 
-# Copy custom layer
-echo -e "${YELLOW}Copying custom layer...${NC}"
-if [ -d "$SCRIPT_DIR/meta-custom" ]; then
-    cp -r "$SCRIPT_DIR/meta-custom" "$WORK_DIR/"
-    echo -e "${GREEN}meta-custom layer copied${NC}"
-else
-    echo -e "${RED}Warning: meta-custom not found in $SCRIPT_DIR${NC}"
-fi
-echo ""
-
-# Initialize build environment
-echo -e "${YELLOW}Initializing build environment...${NC}"
+# ---------------------------------------------------------------------------
+# Step 5: Initialise build environment from Microchip PolarFire SoC template
+# ---------------------------------------------------------------------------
+echo "Initialising build environment"
+echo "==============================="
+export TEMPLATECONF="${WORK_DIR}/meta-mchp/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-bsp/conf/templates/default"
 source openembedded-core/oe-init-build-env build
 
-# Create bblayers.conf
-echo -e "${YELLOW}Configuring bblayers.conf...${NC}"
-cat > conf/bblayers.conf << 'EOF'
-# LAYER_CONF_VERSION is increased each time build/conf/bblayers.conf
-# changes incompatibly
-LCONF_VERSION = "7"
+# Shell is now in $WORK_DIR/build/
 
-BBPATH = "${TOPDIR}"
-BBFILES ?= ""
+# ---------------------------------------------------------------------------
+# Step 6: Register ROS 2 and custom layers via bitbake-layers
+# ---------------------------------------------------------------------------
+echo "Adding meta-ros layers"
+echo "======================"
+bitbake-layers add-layer ../meta-ros/meta-ros-common
+bitbake-layers add-layer ../meta-ros/meta-ros2
+bitbake-layers add-layer ../meta-ros/meta-ros2-humble
 
-BSPDIR := "${TOPDIR}/.."
+echo "Adding meta-custom layer"
+echo "========================"
+bitbake-layers add-layer ../icicle-kit-ros2-humble/meta-custom
 
-BBLAYERS ?= " \
-  ${BSPDIR}/openembedded-core/meta \
-  ${BSPDIR}/meta-openembedded/meta-oe \
-  ${BSPDIR}/meta-openembedded/meta-python \
-  ${BSPDIR}/meta-openembedded/meta-networking \
-  ${BSPDIR}/meta-polarfire-soc-yocto-bsp/meta-polarfire-soc-bsp \
-  ${BSPDIR}/meta-ros/meta-ros-common \
-  ${BSPDIR}/meta-ros/meta-ros2 \
-  ${BSPDIR}/meta-ros/meta-ros2-humble \
-  ${BSPDIR}/meta-custom \
-"
-EOF
-
-# Append custom settings to local.conf
-echo -e "${YELLOW}Configuring local.conf...${NC}"
+# ---------------------------------------------------------------------------
+# Step 7: Append project-specific settings to local.conf
+# ---------------------------------------------------------------------------
+echo "Configuring local.conf"
+echo "======================"
 cat >> conf/local.conf << 'EOF'
 
 #
-# PolarFire SoC Icicle Kit Configuration
+# PolarFire SoC Icicle Kit — project overrides
 #
-MACHINE = "icicle-kit-es"
+MACHINE = "mpfs-icicle-kit"
 
 #
-# Parallel Build Configuration (adjust to your CPU cores)
+# Parallel Build Configuration (adjust to your CPU core count)
 #
 BB_NUMBER_THREADS = "8"
 PARALLEL_MAKE = "-j 8"
@@ -153,18 +149,18 @@ INHERIT:remove = "create-spdx"
 EOF
 
 echo ""
-echo -e "${GREEN}======================================${NC}"
-echo -e "${GREEN} Setup Complete!${NC}"
-echo -e "${GREEN}======================================${NC}"
+echo "=========================="
+echo "=         DONE           ="
+echo "=========================="
 echo ""
-echo "To build the image:"
+echo "To build the image, open a new terminal and run:"
 echo ""
-echo -e "  ${YELLOW}cd $WORK_DIR${NC}"
-echo -e "  ${YELLOW}source openembedded-core/oe-init-build-env build${NC}"
-echo -e "  ${YELLOW}bitbake drone-stage1${NC}"
+echo "  cd ${WORK_DIR}"
+echo "  source openembedded-core/oe-init-build-env build"
+echo "  bitbake drone-stage1"
 echo ""
 echo "Build time: 4-8 hours on first build"
 echo ""
-echo "Output image location:"
-echo "  build/tmp-glibc/deploy/images/icicle-kit-es/drone-stage1-icicle-kit-es.rootfs.wic.gz"
+echo "Output image:"
+echo "  build/tmp-glibc/deploy/images/mpfs-icicle-kit/drone-stage1-mpfs-icicle-kit.rootfs.wic.gz"
 echo ""
